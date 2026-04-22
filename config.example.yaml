@@ -1,0 +1,21 @@
+# Gemini-API Gateway — example config
+#
+# Copy to config.yaml and fill in real values. The program will rewrite the
+# `secure_1psidts` field in-place whenever Gemini rotates the cookie, so the
+# service keeps working across container restarts without manual intervention.
+
+server:
+  host: 0.0.0.0
+  port: 8080
+  log_level: INFO
+
+# Leave the list empty to disable auth (local/private deployments only).
+api_keys:
+  - sk-replace-me
+
+gemini:
+  secure_1psid: "REPLACE_WITH_YOUR_SECURE_1PSID"
+  secure_1psidts: "REPLACE_WITH_YOUR_SECURE_1PSIDTS"
+  proxy: null
+  refresh_interval: 600
+  timeout: 450

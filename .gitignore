@@ -207,3 +207,9 @@ temp/
 # Cookies and credentials
 cookies.json
 *.cookies
+
+# Gemini-API Docker service
+/config.yaml
+/data/
+docker/config.yaml
+docker/data/
