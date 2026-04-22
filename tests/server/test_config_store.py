@@ -1,7 +1,6 @@
 import asyncio
 from pathlib import Path
 
-import pytest
 from ruamel.yaml import YAML
 
 from server.config_store import ConfigStore
@@ -43,7 +42,14 @@ def test_load_parses_sample(tmp_path):
     assert cfg.server.port == 8080
 
 
-@pytest.mark.asyncio
+def test_current_requires_load(tmp_path):
+    import pytest
+    path = _write(tmp_path)
+    store = ConfigStore(path)
+    with pytest.raises(RuntimeError):
+        _ = store.current
+
+
 async def test_update_psidts_persists_and_preserves_comments(tmp_path):
     path = _write(tmp_path)
     store = ConfigStore(path)
@@ -62,7 +68,6 @@ async def test_update_psidts_persists_and_preserves_comments(tmp_path):
     assert store.current.gemini.secure_1psidts == "new-ts-1"
 
 
-@pytest.mark.asyncio
 async def test_update_psidts_concurrent(tmp_path):
     path = _write(tmp_path)
     store = ConfigStore(path)
@@ -78,7 +83,6 @@ async def test_update_psidts_concurrent(tmp_path):
     assert store.current.gemini.secure_1psidts == final
 
 
-@pytest.mark.asyncio
 async def test_update_psidts_empty_is_noop(tmp_path):
     path = _write(tmp_path)
     store = ConfigStore(path)
@@ -87,3 +91,12 @@ async def test_update_psidts_empty_is_noop(tmp_path):
     await store.update_psidts("")
     after = path.read_text(encoding="utf-8")
     assert before == after
+
+
+async def test_update_psidts_leaves_no_temp_files(tmp_path):
+    path = _write(tmp_path)
+    store = ConfigStore(path)
+    store.load()
+    await store.update_psidts("fresh-ts")
+    leftovers = [p.name for p in tmp_path.iterdir() if p.name != path.name and not p.name.endswith(".lock")]
+    assert leftovers == []

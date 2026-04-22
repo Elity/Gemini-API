@@ -17,7 +17,13 @@ COPY server ./server
 
 RUN pip install ".[server]"
 
-RUN mkdir -p /data/cookies /config
+# Non-root user. Mounted /config and /data volumes must be writable by UID 10001.
+RUN groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin app \
+    && mkdir -p /data/cookies /config \
+    && chown -R app:app /app /data /config
+
+USER app
 
 EXPOSE 8080
 

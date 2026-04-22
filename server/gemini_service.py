@@ -17,6 +17,13 @@ from .settings import cookie_dir
 class GeminiService:
     """Owns the single long-lived GeminiClient and a cookie watcher."""
 
+    # Watcher poll interval is derived as refresh_interval // 4, clamped to
+    # [_WATCHER_MIN, _WATCHER_MAX] seconds. 30..120s covers the common range
+    # where we want the watcher responsive but not spammy.
+    _WATCHER_MIN = 30
+    _WATCHER_MAX = 120
+    _WATCHER_RESTART_BACKOFF = 5.0
+
     def __init__(self, store: ConfigStore) -> None:
         self._store = store
         self._client: GeminiClient | None = None
@@ -26,7 +33,12 @@ class GeminiService:
 
     @property
     def is_running(self) -> bool:
-        return self._client is not None and getattr(self._client, "running", False)
+        if self._client is None or not getattr(self._client, "running", False):
+            return False
+        task = self._watcher_task
+        if task is None or task.done():
+            return False
+        return True
 
     @property
     def last_refresh_ok_at(self) -> float:
@@ -54,7 +66,7 @@ class GeminiService:
         self._last_refresh_ok_at = time.time()
         self._last_known_psidts = cfg.gemini.secure_1psidts
         self._watcher_task = asyncio.create_task(
-            self._watch_cookie_refresh(), name="cookie-watcher"
+            self._watcher_supervisor(), name="cookie-watcher"
         )
         logger.info("GeminiService started")
 
@@ -74,8 +86,24 @@ class GeminiService:
             self._client = None
         logger.info("GeminiService stopped")
 
+    async def _watcher_supervisor(self) -> None:
+        # Keeps the watcher alive across unexpected exceptions so a single
+        # transient error (e.g. cookie jar access during client reinit) does
+        # not silently kill the persistence loop.
+        while True:
+            try:
+                await self._watch_cookie_refresh()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(f"cookie watcher crashed, restarting: {exc!r}")
+                await asyncio.sleep(self._WATCHER_RESTART_BACKOFF)
+
     async def _watch_cookie_refresh(self) -> None:
-        interval = max(30, min(120, self.refresh_interval // 4 or 60))
+        interval = max(
+            self._WATCHER_MIN,
+            min(self._WATCHER_MAX, self.refresh_interval // 4 or 60),
+        )
         while True:
             await asyncio.sleep(interval)
             if self._client is None:

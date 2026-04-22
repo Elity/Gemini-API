@@ -22,4 +22,6 @@ def _json_sink(message) -> None:
 
 def setup_logging(level: str = "INFO") -> None:
     logger.remove()
-    logger.add(_json_sink, level=level.upper(), enqueue=False, backtrace=False, diagnose=False)
+    # enqueue=True uses loguru's background queue so synchronous stdout
+    # writes never block the asyncio event loop on the hot path.
+    logger.add(_json_sink, level=level.upper(), enqueue=True, backtrace=False, diagnose=False)

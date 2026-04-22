@@ -15,7 +15,11 @@ async def healthz() -> dict:
 
 @router.get("/readyz")
 async def readyz(request: Request, response: Response) -> dict:
-    service = request.app.state.gemini_service
+    service = getattr(request.app.state, "gemini_service", None)
+    if service is None:
+        response.status_code = 503
+        return {"status": "starting", "detail": "service not initialized"}
+
     if not service.is_running:
         response.status_code = 503
         return {"status": "starting", "detail": "service not running"}

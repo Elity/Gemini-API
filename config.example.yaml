@@ -8,8 +8,17 @@ server:
   host: 0.0.0.0
   port: 8080
   log_level: INFO
+  # Strict default: empty `api_keys` below rejects all requests with 401.
+  # Set auth_disabled=true only for isolated local development.
+  auth_disabled: false
+  # Regex the `{model}` URL segment must match.
+  model_allowlist_regex: "^[A-Za-z0-9._-]{1,64}$"
+  # Max base64 characters per inline_data.data field (~20 MB of binary).
+  max_inline_data_b64_chars: 27000000
 
-# Leave the list empty to disable auth (local/private deployments only).
+# API keys required on every request. Provide at least one non-empty key.
+# Presenting a key via any of: `x-goog-api-key` header, `?key=` query, or
+# `Authorization: Bearer <key>`.
 api_keys:
   - sk-replace-me
 

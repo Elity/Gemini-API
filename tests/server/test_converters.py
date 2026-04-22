@@ -49,7 +49,9 @@ def test_request_to_prompt_with_system_instruction_and_inline_image():
     assert files[0].getvalue() == img_bytes
 
 
-def test_request_to_prompt_invalid_base64():
+def test_request_to_prompt_invalid_base64_raises():
+    # The strict validator rejects non-base64 input so downstream never sees
+    # garbage bytes. Caller is expected to return HTTP 400.
     req = GenerateContentRequest.model_validate(
         {
             "contents": [
@@ -62,21 +64,31 @@ def test_request_to_prompt_invalid_base64():
             ]
         }
     )
-    # The permissive decoder will accept junk; at least it shouldn't raise here.
+    with pytest.raises(ValueError):
+        request_to_prompt(req)
+
+
+def test_request_to_prompt_file_data_uri_is_ignored():
+    req = GenerateContentRequest.model_validate(
+        {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "ref"},
+                        {"fileData": {"mimeType": "image/png", "fileUri": "gs://bucket/x"}},
+                    ],
+                }
+            ]
+        }
+    )
     prompt, files = request_to_prompt(req)
-    assert prompt == ""
-    assert len(files) == 1
+    assert files == []
+    assert prompt == "user: ref"
 
 
-class _FakeOutput:
-    def __init__(self, text: str, images: list | None = None) -> None:
-        self.text = text
-        self.images = images or []
-
-
-@pytest.mark.asyncio
-async def test_output_to_response_text_only():
-    output = _FakeOutput("Hello, world!")
+async def test_output_to_response_text_only(fake_output_cls):
+    output = fake_output_cls("Hello, world!")
     resp = await output_to_response(output, model_version="gemini-3-pro")
     dumped = resp.model_dump(by_alias=True)
     assert dumped["modelVersion"] == "gemini-3-pro"
@@ -87,15 +99,14 @@ async def test_output_to_response_text_only():
     assert candidates[0]["finishReason"] == "STOP"
 
 
-@pytest.mark.asyncio
-async def test_output_to_response_with_image(tmp_path):
+async def test_output_to_response_with_image(tmp_path, fake_output_cls):
     class _FakeImage:
         async def save(self, path: str = "temp", **kwargs):
             target = tmp_path / "img.png"
             target.write_bytes(b"imgdata")
             return str(target)
 
-    output = _FakeOutput("here is an image", images=[_FakeImage()])
+    output = fake_output_cls("here is an image", images=[_FakeImage()])
     resp = await output_to_response(output, model_version="nano-banana")
     dumped = resp.model_dump(by_alias=True)
     parts = dumped["candidates"][0]["content"]["parts"]
@@ -105,15 +116,37 @@ async def test_output_to_response_with_image(tmp_path):
     assert base64.b64decode(parts[1]["inlineData"]["data"]) == b"imgdata"
 
 
-@pytest.mark.asyncio
-async def test_output_to_response_image_failure_skipped(caplog):
+async def test_output_to_response_image_failure_skipped(fake_output_cls):
     class _BadImage:
         async def save(self, *a, **kw):
             raise RuntimeError("net down")
 
-    output = _FakeOutput("partial", images=[_BadImage()])
+    output = fake_output_cls("partial", images=[_BadImage()])
     resp = await output_to_response(output, model_version="m")
     dumped = resp.model_dump(by_alias=True)
     parts = dumped["candidates"][0]["content"]["parts"]
     assert len(parts) == 1
     assert parts[0]["text"] == "partial"
+
+
+async def test_output_to_response_usage_populated_when_available(fake_output_cls):
+    output = fake_output_cls(
+        "hi",
+        prompt_token_count=10,
+        candidates_token_count=5,
+    )
+    resp = await output_to_response(output, model_version="m")
+    dumped = resp.model_dump(by_alias=True)
+    usage = dumped["usageMetadata"]
+    assert usage["promptTokenCount"] == 10
+    assert usage["candidatesTokenCount"] == 5
+    assert usage["totalTokenCount"] == 15
+
+
+async def test_output_to_response_usage_defaults_zero(fake_output_cls):
+    output = fake_output_cls("hi")
+    resp = await output_to_response(output, model_version="m")
+    dumped = resp.model_dump(by_alias=True)
+    usage = dumped["usageMetadata"]
+    assert usage["promptTokenCount"] == 0
+    assert usage["totalTokenCount"] == 0

@@ -16,12 +16,22 @@ def _body(code: int, status_str: str, message: str) -> dict:
     return {"error": {"code": code, "status": status_str, "message": message}}
 
 
+def _safe_validation_details(errors: list[dict]) -> str:
+    # Return only field path + error type. The raw `input` value is stripped
+    # to avoid echoing user-submitted data (which may contain secrets) and
+    # to avoid leaking the full request schema to probing clients.
+    shaped = []
+    for e in errors[:3]:
+        shaped.append({"loc": list(e.get("loc", ())), "type": e.get("type", "")})
+    return str(shaped)
+
+
 def install_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def _validation(request: Request, exc: RequestValidationError):
         return JSONResponse(
             status_code=400,
-            content=_body(400, "INVALID_ARGUMENT", str(exc.errors()[:3])),
+            content=_body(400, "INVALID_ARGUMENT", _safe_validation_details(exc.errors())),
         )
 
     @app.exception_handler(HTTPException)
@@ -51,9 +61,10 @@ def install_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(GeminiTimeoutError)
     async def _timeout(request: Request, exc: GeminiTimeoutError):
+        logger.warning(f"upstream TimeoutError: {exc!r}")
         return JSONResponse(
             status_code=504,
-            content=_body(504, "DEADLINE_EXCEEDED", str(exc) or "timeout"),
+            content=_body(504, "DEADLINE_EXCEEDED", "request timed out"),
         )
 
     @app.exception_handler(AsyncTimeoutError)
@@ -68,7 +79,7 @@ def install_exception_handlers(app: FastAPI) -> None:
         logger.warning(f"upstream APIError: {exc!r}")
         return JSONResponse(
             status_code=502,
-            content=_body(502, "INTERNAL", str(exc) or "upstream error"),
+            content=_body(502, "INTERNAL", "upstream error"),
         )
 
     @app.exception_handler(Exception)

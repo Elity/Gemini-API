@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import os
+import tempfile
 from pathlib import Path
 
 from loguru import logger
@@ -16,7 +17,15 @@ _yaml.preserve_quotes = True
 
 
 class ConfigStore:
-    """Owns read/write access to the single config.yaml file."""
+    """Owns read/write access to the single config.yaml file.
+
+    Concurrency model (single-process only):
+    - asyncio.Lock guards the in-memory _config object within one event loop.
+    - fcntl.flock on a sibling .lock file guards the on-disk file against
+      other cooperating processes. Advisory only — ignored by processes that
+      don't check. The Docker image runs with --workers 1, which this class
+      assumes; multi-worker deployment would need an external mutex.
+    """
 
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -37,7 +46,7 @@ class ConfigStore:
     @property
     def current(self) -> Config:
         if self._config is None:
-            return self.load()
+            raise RuntimeError("ConfigStore.load() must be called before current")
         return self._config
 
     async def update_psidts(self, new_value: str) -> None:
@@ -63,12 +72,27 @@ class ConfigStore:
                 data.setdefault("gemini", {})
                 data["gemini"]["secure_1psidts"] = new_value
 
-                tmp_path = self._path.with_suffix(self._path.suffix + ".tmp")
-                with tmp_path.open("w", encoding="utf-8") as tmp_f:
-                    _yaml.dump(data, tmp_f)
-                    tmp_f.flush()
-                    os.fsync(tmp_f.fileno())
-                os.replace(tmp_path, self._path)
+                # NamedTemporaryFile uses an unpredictable suffix so a sidecar
+                # scanning /config cannot read a known .tmp path mid-write.
+                fd, tmp_name = tempfile.mkstemp(
+                    prefix=f".{self._path.name}.",
+                    suffix=".tmp",
+                    dir=str(self._path.parent),
+                )
+                tmp_path = Path(tmp_name)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as tmp_f:
+                        _yaml.dump(data, tmp_f)
+                        tmp_f.flush()
+                        os.fsync(tmp_f.fileno())
+                    os.chmod(tmp_path, 0o600)
+                    os.replace(tmp_path, self._path)
+                except Exception:
+                    try:
+                        tmp_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    raise
             finally:
                 fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
 

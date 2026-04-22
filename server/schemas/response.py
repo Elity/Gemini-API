@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+
+
+FinishReason = Literal["STOP", "MAX_TOKENS", "SAFETY", "RECITATION", "OTHER"]
 
 
 class _CamelModel(BaseModel):
@@ -9,7 +14,6 @@ class _CamelModel(BaseModel):
         alias_generator=to_camel,
         populate_by_name=True,
         extra="ignore",
-        ser_json_bytes="base64",
     )
 
 
@@ -30,7 +34,7 @@ class Content(_CamelModel):
 
 class Candidate(_CamelModel):
     content: Content
-    finish_reason: str = "STOP"
+    finish_reason: FinishReason = "STOP"
     index: int = 0
 
 
