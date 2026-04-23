@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from .config_store import ConfigStore
@@ -63,6 +64,16 @@ def create_app() -> FastAPI:
     # the lifespan has finished wiring services up.
     app.state.config_store = None
     app.state.gemini_service = None
+    # Open CORS: any origin may call the API, but without credentials (no
+    # cookies). Clients authenticate via the Authorization header, which
+    # browsers will only send when the JS explicitly sets it.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     install_exception_handlers(app)
     app.include_router(health_router)
     app.include_router(generate_router)
