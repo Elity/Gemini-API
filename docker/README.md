@@ -9,14 +9,18 @@ can point at your own container instead.
 
 ```bash
 cd docker
-cp ../config.example.yaml config.yaml            # then fill in real PSID/PSIDTS/api_keys
-mkdir -p data
+mkdir -p config data
+cp ../config.example.yaml config/config.yaml     # then fill in real PSID/PSIDTS/api_keys
+sudo chown -R 10001:10001 config data            # container runs as UID 10001
 docker compose up -d --build
 ```
 
-Container runs as non-root (UID 10001). The mounted `./data` and
-`./config/config.yaml` must be writable by that UID; `chown -R 10001:10001`
-if you hit permission errors on the rewritten `secure_1psidts` field.
+Container runs as non-root (UID 10001). Both `./config/` and `./data/`
+must be writable by that UID — the `chown` above handles this. The gateway
+atomically rewrites `config/config.yaml` every time Google rotates
+`__Secure-1PSIDTS`, which requires the *parent directory* to be mounted
+(not the single file). Mounting only the file causes `os.replace` to fail
+with `EBUSY`.
 
 Test it with the same shape of request the official API accepts:
 
@@ -248,6 +252,26 @@ See [`config.example.yaml`](../config.example.yaml). The program rewrites
 `gemini.secure_1psidts` in place; comments are preserved via `ruamel.yaml`
 round-trip but formatting in unusual cases may shift slightly — keep a backup
 if you customize heavily.
+
+## Upgrading from a single-file mount
+
+Earlier versions of the compose file mounted `./config.yaml:/config/config.yaml`
+directly. If you see `ERROR Failed to persist new secure_1psidts:
+OSError(16, 'Device or resource busy')` in the container logs, you are on
+the old layout. Migrate in place:
+
+```bash
+cd docker
+docker compose down
+mkdir -p config
+mv config.yaml config/config.yaml            # skip if you already moved it
+sudo chown -R 10001:10001 config data
+docker compose up -d
+```
+
+The new compose file mounts the parent directory, so `os.replace` can
+rewrite `config/config.yaml` atomically whenever the `__Secure-1PSIDTS`
+cookie rotates.
 
 ## Security posture
 

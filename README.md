@@ -46,7 +46,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./config.yaml:/config/config.yaml
+      - ./config:/config
       - ./data:/data
     environment:
       - CONFIG_PATH=/config/config.yaml
@@ -74,8 +74,9 @@ gemini:
 The container runs as UID 10001. Make sure the mounted `./data` and `./config.yaml` are writable by that UID:
 
 ```bash
-mkdir -p ./data
-sudo chown -R 10001:10001 ./data ./config.yaml
+mkdir -p ./config ./data
+cp /path/to/config.example.yaml ./config/config.yaml   # edit after copy
+sudo chown -R 10001:10001 ./config ./data
 docker compose up -d
 ```
 
