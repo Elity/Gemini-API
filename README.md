@@ -83,7 +83,7 @@ Smoke test against the same shape Google's API accepts:
 
 ```bash
 curl -s -X POST \
-  "http://localhost:8080/v1beta/models/gemini-2.5-flash:generateContent" \
+  "http://localhost:8080/v1beta/models/gemini-3-flash:generateContent" \
   -H "x-goog-api-key: sk-replace-me" \
   -H "Content-Type: application/json" \
   -d '{

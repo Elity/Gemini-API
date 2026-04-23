@@ -22,7 +22,7 @@ Test it with the same shape of request the official API accepts:
 
 ```bash
 curl -s -X POST \
-  "http://localhost:8080/v1beta/models/gemini-3-pro:generateContent" \
+  "http://localhost:8080/v1beta/models/gemini-3-flash:generateContent" \
   -H "x-goog-api-key: sk-replace-me" \
   -H "Content-Type: application/json" \
   -d '{
@@ -38,7 +38,7 @@ Streaming (default: JSON array, matches Google v1beta):
 
 ```bash
 curl -N -X POST \
-  "http://localhost:8080/v1beta/models/gemini-3-pro:streamGenerateContent" \
+  "http://localhost:8080/v1beta/models/gemini-3-flash:streamGenerateContent" \
   -H "x-goog-api-key: sk-replace-me" \
   -H "Content-Type: application/json" \
   -d '{"contents":[{"parts":[{"text":"Say hi in haiku"}]}]}'
@@ -48,7 +48,7 @@ Streaming with Server-Sent Events (add `?alt=sse`):
 
 ```bash
 curl -N -X POST \
-  "http://localhost:8080/v1beta/models/gemini-3-pro:streamGenerateContent?alt=sse" \
+  "http://localhost:8080/v1beta/models/gemini-3-flash:streamGenerateContent?alt=sse" \
   -H "x-goog-api-key: sk-replace-me" \
   -H "Content-Type: application/json" \
   -d '{"contents":[{"parts":[{"text":"Say hi"}]}]}'
@@ -59,6 +59,132 @@ Liveness / readiness:
 - `GET /healthz` — process is up.
 - `GET /readyz` — `GeminiClient` is running, watcher task alive, and the
   `__Secure-1PSIDTS` cookie has been refreshed within `2 × refresh_interval`.
+
+## Supported models
+
+The `{model}` path segment must match a model name available to your Gemini
+account. The authoritative list is enumerated in
+[`src/gemini_webapi/constants.py`](../src/gemini_webapi/constants.py) (`class Model`)
+and is also dynamically reported by the upstream `/400` error body when you
+guess wrong:
+
+| Model name                        | Family              | Notes                                      |
+|-----------------------------------|---------------------|--------------------------------------------|
+| `unspecified`                     | default             | Let the account pick its own default.      |
+| `gemini-3-pro`                    | Pro                 | Strongest reasoning.                       |
+| `gemini-3-flash`                  | Flash               | Fast & cheap. Good default for smoke tests.|
+| `gemini-3-flash-thinking`         | Flash (CoT)         | Chain-of-thought exposed in output.        |
+| `gemini-3-pro-plus`               | Pro Plus            | Larger context. Requires Gemini Advanced.  |
+| `gemini-3-flash-plus`             | Flash Plus          | Larger context. Requires Gemini Advanced.  |
+| `gemini-3-flash-thinking-plus`    | Flash Thinking Plus | Plus + CoT. Requires Gemini Advanced.      |
+| `gemini-3-pro-advanced`           | Pro Advanced        | Top tier. Requires Gemini Advanced.        |
+| `gemini-3-flash-advanced`         | Flash Advanced      | Requires Gemini Advanced.                  |
+| `gemini-3-flash-thinking-advanced`| Flash Thinking Adv. | Requires Gemini Advanced.                  |
+
+The list depends on what your Google account has access to. If you request
+a model you are not entitled to (or a name the upstream library does not
+recognise), the gateway returns `400 Bad Request` with the exact set of
+available names in the error message.
+
+## Request recipes (curl)
+
+All examples assume the gateway is at `http://localhost:8080` and the API
+key is `sk-replace-me`. Swap in your host/key. Each recipe is a one-liner
+you can copy-paste.
+
+### Plain text → text (non-streaming)
+
+```bash
+curl -s -X POST \
+  "http://localhost:8080/v1beta/models/gemini-3-flash:generateContent" \
+  -H "x-goog-api-key: sk-replace-me" \
+  -H "Content-Type: application/json" \
+  -d '{"contents":[{"parts":[{"text":"Write a haiku about self-hosting."}]}]}'
+```
+
+### Streaming — JSON array (Google v1beta default)
+
+```bash
+curl -N -X POST \
+  "http://localhost:8080/v1beta/models/gemini-3-flash:streamGenerateContent" \
+  -H "x-goog-api-key: sk-replace-me" \
+  -H "Content-Type: application/json" \
+  -d '{"contents":[{"parts":[{"text":"Count slowly from 1 to 5."}]}]}'
+```
+
+### Streaming — Server-Sent Events (`?alt=sse`)
+
+```bash
+curl -N -X POST \
+  "http://localhost:8080/v1beta/models/gemini-3-flash:streamGenerateContent?alt=sse" \
+  -H "x-goog-api-key: sk-replace-me" \
+  -H "Content-Type: application/json" \
+  -d '{"contents":[{"parts":[{"text":"Count slowly from 1 to 5."}]}]}'
+```
+
+### Image input (base64-encoded `inline_data`)
+
+```bash
+IMG_B64=$(base64 -i /path/to/photo.jpg | tr -d '\n')
+curl -s -X POST \
+  "http://localhost:8080/v1beta/models/gemini-3-pro:generateContent" \
+  -H "x-goog-api-key: sk-replace-me" \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n --arg b64 \"$IMG_B64\" '{
+    contents: [{
+      parts: [
+        { text: \"Describe this image in one sentence.\" },
+        { inline_data: { mime_type: \"image/jpeg\", data: $b64 } }
+      ]
+    }]
+  }')"
+```
+
+The base64 payload is capped at `server.max_inline_data_b64_chars` characters
+(default 27 000 000 ≈ 20 MB of binary). Use `image/png`, `image/webp`, etc.
+for other formats.
+
+### Image generation (text → generated image)
+
+```bash
+curl -s -X POST \
+  "http://localhost:8080/v1beta/models/gemini-3-pro:generateContent" \
+  -H "x-goog-api-key: sk-replace-me" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [{
+      "parts": [{
+        "text": "Generate a picture of a nano banana plated at a fine-dining restaurant, Gemini-themed."
+      }]
+    }]
+  }' | jq '.candidates[0].content.parts[] | select(.inline_data) | .inline_data.mime_type'
+```
+
+Generated images come back as `inline_data` parts (base64). Pipe through
+`jq` + `base64 -d` to save:
+
+```bash
+# … same request as above, then:
+| jq -r '.candidates[0].content.parts[] | select(.inline_data) | .inline_data.data' \
+| base64 -d > out.png
+```
+
+## Google API compatibility reference
+
+The gateway mirrors the public Google Gemini REST contract where possible,
+so off-the-shelf clients that target the official endpoint work unchanged.
+For the full schema (request / response JSON shape, field semantics, the
+parts of `GenerateContentRequest` this gateway silently ignores), consult
+Google's docs:
+
+- REST method reference — [`generateContent`](https://ai.google.dev/api/generate-content) / [`streamGenerateContent`](https://ai.google.dev/api/generate-content#method:-models.streamgeneratecontent)
+- All Gemini REST endpoints — <https://ai.google.dev/api/rest>
+- Official model catalog (upstream Google — names differ from the web-account
+  names this gateway accepts, see [Supported models](#supported-models)) — <https://ai.google.dev/gemini-api/docs/models>
+
+Gateway-specific deviations from Google's contract are listed in
+[What is and isn't implemented](#what-is-and-isnt-implemented) and
+[Breaking changes](#breaking-changes-since-initial-server-commit).
 
 ## Breaking changes (since initial server commit)
 
